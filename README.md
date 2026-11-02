@@ -26,8 +26,10 @@ projections into an MP4. For MP4 output, choose how many seconds each image is
 displayed and where to save the video. Differently sized projections are
 centered on a common black canvas in the video. PNGs are saved as
 `projection_001.png`, `projection_002.png`, and so on in a `projections`
-folder beside `main.py`. Both formats use 8-bit grayscale, where 0 is black
-and 255 is white. The MP4 is finalized for early playback and uses frames
+folder beside `main.py`. When run as a packaged executable, PNGs go in a
+`projections` folder beside the executable. That folder is created if needed.
+Both formats use 8-bit grayscale, where 0 is black and 255 is white. The MP4
+is finalized for early playback and uses frames
 without B-frame reordering to improve compatibility with players and editors.
 Canceling a dialog stops the run.
 

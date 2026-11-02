@@ -1,1 +1,6 @@
 /projections/
+__pycache__/
+*.py[cod]
+/build/
+/dist/
+/*.spec

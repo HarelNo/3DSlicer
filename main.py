@@ -1,4 +1,5 @@
 
+import sys
 from math import ceil, floor
 from pathlib import Path
 
@@ -349,6 +350,17 @@ def write_projection_video(images, path, frame_duration):
         writer.close()
 
 
+# Create and return the projections folder beside the script or executable.
+def get_projection_output_directory():
+    if getattr(sys, "frozen", False):
+        application_dir = Path(sys.executable).resolve().parent
+    else:
+        application_dir = Path(__file__).resolve().parent
+    output_dir = application_dir / "projections"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
 # Run the input, projection, and output workflow.
 def main():
     selected_files = select_input_files()
@@ -395,8 +407,7 @@ def main():
         write_projection_video(images, video_path, frame_duration)
         print(f"Saved {len(images)} projections to video {video_path}")
     else:
-        output_dir = Path(__file__).with_name("projections")
-        output_dir.mkdir(exist_ok=True)
+        output_dir = get_projection_output_directory()
         for index, image in enumerate(images, start=1):
             output_path = output_dir / f"projection_{index:03d}.png"
             write_projection_png(image, output_path)
