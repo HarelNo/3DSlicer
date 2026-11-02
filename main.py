@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 
+# Load a 3D NRRD volume and scale its intensities to 8-bit grayscale.
 def load_nrrd_grayscale(path):
     """Load a 3D NRRD volume and scale its intensities to 8-bit grayscale."""
     data, header = nrrd.read(path, index_order="F")
@@ -30,7 +31,8 @@ def load_nrrd_grayscale(path):
     return grayscale.astype(np.uint8)
 
 
-def _sample_trilinear(matrix, point):
+# Return the nearest voxel value, or None when the point is outside the volume.
+def _sample_nearest(matrix, point):
     x, y, z = point
     depth = len(matrix)
     height = len(matrix[0])
@@ -41,27 +43,16 @@ def _sample_trilinear(matrix, point):
         and -bounds_tolerance <= y <= height - 1 + bounds_tolerance
         and -bounds_tolerance <= x <= width - 1 + bounds_tolerance
     ):
-        return 0
+        return None
     x = min(max(x, 0), width - 1)
     y = min(max(y, 0), height - 1)
     z = min(max(z, 0), depth - 1)
-
-    x0, y0, z0 = floor(x), floor(y), floor(z)
-    x1 = min(x0 + 1, width - 1)
-    y1 = min(y0 + 1, height - 1)
-    z1 = min(z0 + 1, depth - 1)
-    dx, dy, dz = x - x0, y - y0, z - z0
-
-    value = 0.0
-    for zi, z_weight in ((z0, 1 - dz), (z1, dz)):
-        for yi, y_weight in ((y0, 1 - dy), (y1, dy)):
-            for xi, x_weight in ((x0, 1 - dx), (x1, dx)):
-                value += matrix[zi][yi][xi] * x_weight * y_weight * z_weight
-    return floor(value + 0.5)
+    return matrix[floor(z + 0.5)][floor(y + 0.5)][floor(x + 0.5)]
 
 
-def project_coordinates(matrix, points):
-    """Project a triangle or isosceles trapezoid from its defining points."""
+# Build a 2D projection and report whether any sampled point intersects the volume.
+def _project_coordinates_with_intersection(matrix, points):
+    """Project a shape and report whether any sampled point is in the volume."""
     try:
         volume = np.asarray(matrix)
     except ValueError as error:
@@ -155,6 +146,7 @@ def project_coordinates(matrix, points):
     rows = ceil(row_extent) + 1
     columns = ceil(column_extent) + 1
     result = [[0 for _ in range(columns)] for _ in range(rows)]
+    intersects_volume = False
 
     for y in range(rows):
         fraction = y / (rows - 1)
@@ -174,16 +166,28 @@ def project_coordinates(matrix, points):
                 if not 0 <= along_row <= 1:
                     continue
             point = start + along_row * span
-            result[y][x] = _sample_trilinear(matrix, point)
+            sample = _sample_nearest(matrix, point)
+            if sample is not None:
+                intersects_volume = True
+                result[y][x] = sample
 
-    return result
+    return result, intersects_volume
 
 
+# Project a triangle or isosceles trapezoid into a 2D image.
+def project_coordinates(matrix, points):
+    """Project a triangle or isosceles trapezoid from its defining points."""
+    image, _ = _project_coordinates_with_intersection(matrix, points)
+    return image
+
+
+# Save a row-major grayscale image as an 8-bit PNG.
 def write_projection_png(image, path):
     """Write a row-major grayscale image as an 8-bit PNG."""
     Image.fromarray(np.asarray(image, dtype=np.uint8)).save(path, format="PNG")
 
 
+# Read coordinate groups from a text file and validate their format.
 def load_coordinate_series(path):
     """Read groups of three or four comma-separated xyz points."""
     series = []
@@ -243,6 +247,7 @@ def load_coordinate_series(path):
     return series
 
 
+# Ask the user to select input files and choose PNG or MP4 output.
 def select_input_files():
     """Prompt for source files and the desired projection output."""
     from tkinter import Tk, filedialog, messagebox, simpledialog
@@ -303,6 +308,7 @@ def select_input_files():
         root.destroy()
 
 
+# Encode grayscale projection images into an MP4 video.
 def write_projection_video(images, path, frame_duration):
     """Write grayscale projection images to an MP4 with a fixed frame duration."""
     import imageio_ffmpeg
@@ -343,6 +349,7 @@ def write_projection_video(images, path, frame_duration):
         writer.close()
 
 
+# Run the input, projection, and output workflow.
 def main():
     selected_files = select_input_files()
     if selected_files is None:
@@ -352,12 +359,36 @@ def main():
     input_path, coordinates_path, output_format, frame_duration, video_path = (
         selected_files
     )
-    matrix = load_nrrd_grayscale(input_path)
+    try:
+        matrix = load_nrrd_grayscale(input_path)
+    except (nrrd.NRRDError, OSError, ValueError) as error:
+        from tkinter import Tk, messagebox
+
+        root = Tk()
+        root.withdraw()
+        try:
+            messagebox.showerror(
+                "Unable to load NRRD file",
+                f"The selected file could not be read as a valid 3D NRRD volume:\n"
+                f"{error}",
+                parent=root,
+            )
+        finally:
+            root.destroy()
+        return
+
     coordinate_series = load_coordinate_series(coordinates_path)
 
     images = []
-    for points in coordinate_series:
-        image = project_coordinates(matrix, points)
+    for index, points in enumerate(coordinate_series, start=1):
+        image, intersects_volume = _project_coordinates_with_intersection(
+            matrix, points
+        )
+        if not intersects_volume:
+            print(
+                f"Warning: projection {index} has no sample points inside the "
+                "volume; saving a black projection."
+            )
         images.append(np.asarray(image, dtype=np.uint8))
 
     if output_format == "mp4":
