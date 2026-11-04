@@ -2,7 +2,7 @@ Purpose:
 This program is made to generate 2D image slices at various angles of a 3D nrrd volume file with given coordinates.
 
 Scope:
-Creation of a simple .exe file that requests an nrrd file and a cvs file and outputs a series of slices/video containing all
+Creation of a simple .exe file that requests an nrrd file and a CSV file and outputs a series of slices/video containing all
 images trapped in the given set of coordinates
 
 non-functional requirements:

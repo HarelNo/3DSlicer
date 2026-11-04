@@ -6,7 +6,7 @@ Idea:
 Problem with the idea:
   Generating a 2d plane and calculating the overlap takes alot of effort and slows down the frame generation speed immensly.
 Final steps:
-  Using the algorithm given by the task an isosceles triangle or an isosceles trapezoid is generated and the image "trapped" within it is then saved and potentially saved as a video
+  Using the algorithm given by the task an isosceles triangle or an isosceles trapezoid is generated and the image "trapped" within it is then saved potentially as a video
 
 
 
@@ -33,9 +33,15 @@ is finalized for early playback and uses frames
 without B-frame reordering to improve compatibility with players and editors.
 Canceling a dialog stops the run.
 
-`Coordinates.txt` can contain any number of coordinate series. Each series
-consists of either three or four rows, one `(x, y, z)` voxel coordinate per
-row, with blank lines between series:
+Coordinate input can be a text file or CSV file. Text files contain any number
+of coordinate series, each consisting of three or four rows with one
+`(x, y, z)` voxel coordinate per row and blank lines between series. CSV files
+contain one series per row: a point count (`3` or `4`) followed by the
+coordinates for each point. A header row is optional; when present, it may use
+the `Number of Points (3 or 4),x1,y1,z1,...` format. Triangle rows may leave
+the last three (fourth-point) fields blank. For four-point CSV rows, points 1
+and 2 define one parallel side and points 3 and 4 define the other; the loader
+converts them to perimeter order for projection.
 
 - Three points define an isosceles triangle. The first point is the apex and
   is equally distant from the other two.
@@ -63,7 +69,5 @@ shape or the volume black. For example:
 
 `load_nrrd_grayscale(path)` accepts a 3D scalar NRRD and scales its complete
 intensity range linearly to integers from `0` (black) to `255` (white). The
-triangle projection uses `(x, y, z)` voxel coordinates and trilinear
-interpolation to sample fractional positions between voxels; it rounds the
-interpolated value to the nearest 8-bit grayscale level. Samples outside the
-volume are set to `0`.
+projection uses `(x, y, z)` voxel coordinates and samples the nearest voxel
+for fractional positions. Samples outside the shape or volume are set to `0`.

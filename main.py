@@ -1,4 +1,5 @@
 
+import csv
 import sys
 from math import ceil, floor
 from pathlib import Path
@@ -146,33 +147,50 @@ def _project_coordinates_with_intersection(matrix, points):
 
     rows = ceil(row_extent) + 1
     columns = ceil(column_extent) + 1
-    result = [[0 for _ in range(columns)] for _ in range(rows)]
-    intersects_volume = False
+    row_fractions = np.arange(rows, dtype=np.float64) / (rows - 1)
+    starts = row_start + row_fractions[:, np.newaxis] * row_start_vector
+    ends = opposite_start + row_fractions[:, np.newaxis] * opposite_start_vector
+    spans = ends - starts
+    row_lengths = np.linalg.norm(spans, axis=1)
+    x_offsets = ((columns - 1) - row_lengths) / 2
 
-    for y in range(rows):
-        fraction = y / (rows - 1)
-        start = row_start + fraction * row_start_vector
-        end = opposite_start + fraction * opposite_start_vector
-        span = end - start
-        row_length = np.linalg.norm(span)
-        x_offset = ((columns - 1) - row_length) / 2
+    along_rows = np.zeros((rows, columns), dtype=np.float64)
+    nonzero_rows = row_lengths != 0
+    np.divide(
+        np.arange(columns, dtype=np.float64)[np.newaxis, :]
+        - x_offsets[:, np.newaxis],
+        row_lengths[:, np.newaxis],
+        out=along_rows,
+        where=nonzero_rows[:, np.newaxis],
+    )
+    shape_mask = (
+        (along_rows >= 0) & (along_rows <= 1) & nonzero_rows[:, np.newaxis]
+    )
+    shape_mask[~nonzero_rows, columns // 2] = True
+    sample_points = starts[:, np.newaxis, :] + along_rows[:, :, np.newaxis] * spans[
+        :, np.newaxis, :
+    ]
 
-        for x in range(columns):
-            if row_length == 0:
-                if x != floor((columns - 1) / 2 + 0.5):
-                    continue
-                along_row = 0
-            else:
-                along_row = (x - x_offset) / row_length
-                if not 0 <= along_row <= 1:
-                    continue
-            point = start + along_row * span
-            sample = _sample_nearest(matrix, point)
-            if sample is not None:
-                intersects_volume = True
-                result[y][x] = sample
+    depth, height, width = volume.shape
+    x, y, z = np.moveaxis(sample_points, -1, 0)
+    in_bounds = (
+        (z >= -1e-8)
+        & (z <= depth - 1 + 1e-8)
+        & (y >= -1e-8)
+        & (y <= height - 1 + 1e-8)
+        & (x >= -1e-8)
+        & (x <= width - 1 + 1e-8)
+    )
+    sample_mask = shape_mask & in_bounds
+    x_indices = np.floor(np.clip(x, 0, width - 1) + 0.5).astype(np.intp)
+    y_indices = np.floor(np.clip(y, 0, height - 1) + 0.5).astype(np.intp)
+    z_indices = np.floor(np.clip(z, 0, depth - 1) + 0.5).astype(np.intp)
 
-    return result, intersects_volume
+    result = np.zeros((rows, columns), dtype=np.uint8)
+    result[sample_mask] = volume[
+        z_indices[sample_mask], y_indices[sample_mask], x_indices[sample_mask]
+    ]
+    return result.tolist(), bool(np.any(sample_mask))
 
 
 # Project a triangle or isosceles trapezoid into a 2D image.
@@ -190,12 +208,16 @@ def write_projection_png(image, path):
 
 # Read coordinate groups from a text file and validate their format.
 def load_coordinate_series(path):
-    """Read groups of three or four comma-separated xyz points."""
+    """Read coordinate groups from a text file or one-shape-per-row CSV."""
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        return _load_coordinate_csv(path)
+
     series = []
     current_points = []
     current_start_line = None
 
-    with Path(path).open(encoding="utf-8") as coordinate_file:
+    with path.open(encoding="utf-8-sig") as coordinate_file:
         for line_number, line in enumerate(coordinate_file, start=1):
             stripped_line = line.strip()
             if not stripped_line:
@@ -248,6 +270,73 @@ def load_coordinate_series(path):
     return series
 
 
+def _load_coordinate_csv(path):
+    """Read CSV rows containing a point count followed by xyz coordinates."""
+    series = []
+    with path.open(encoding="utf-8-sig", newline="") as coordinate_file:
+        reader = csv.reader(coordinate_file)
+        for row in reader:
+            line_number = reader.line_num
+            if not row or not any(field.strip() for field in row):
+                continue
+            fields = [field.strip() for field in row]
+            if fields[0].startswith("#"):
+                continue
+
+            if fields[0].casefold().startswith("number of points"):
+                continue
+            try:
+                point_count = int(fields[0])
+            except ValueError as error:
+                raise ValueError(
+                    f"{path}: CSV row must start with the number of points (3 or 4)"
+                ) from error
+            if point_count not in (3, 4):
+                raise ValueError(
+                    f"{path}: CSV row point count must be 3 or 4; found {fields[0]!r}"
+                )
+
+            coordinate_count = point_count * 3
+            if len(fields) < coordinate_count + 1 or any(
+                not field for field in fields[1 : coordinate_count + 1]
+            ):
+                raise ValueError(
+                    f"{path}: line {line_number} must contain "
+                    f"{point_count} complete xyz points"
+                )
+            if any(field for field in fields[coordinate_count + 1 :]):
+                raise ValueError(
+                    f"{path}: line {line_number} has coordinates beyond "
+                    f"the declared {point_count} points"
+                )
+
+            try:
+                coordinates = [
+                    float(field) for field in fields[1 : coordinate_count + 1]
+                ]
+            except ValueError as error:
+                raise ValueError(
+                    f"{path}: line {line_number} contains a non-numeric coordinate"
+                ) from error
+            if not np.isfinite(coordinates).all():
+                raise ValueError(
+                    f"{path}: line {line_number} coordinates must be finite"
+                )
+            points = tuple(
+                tuple(coordinates[offset : offset + 3])
+                for offset in range(0, coordinate_count, 3)
+            )
+            if point_count == 4:
+                # CSV stores the two endpoints of each parallel side together;
+                # projection expects the four vertices in perimeter order.
+                points = (points[0], points[1], points[3], points[2])
+            series.append(points)
+
+    if not series:
+        raise ValueError(f"{path}: no coordinate series found")
+    return series
+
+
 # Ask the user to select input files and choose PNG or MP4 output.
 def select_input_files():
     """Prompt for source files and the desired projection output."""
@@ -267,7 +356,12 @@ def select_input_files():
         coordinates_path = filedialog.askopenfilename(
             parent=root,
             title="Select the coordinate series file",
-            filetypes=(("Text files", "*.txt"), ("All files", "*.*")),
+            filetypes=(
+                ("Coordinate files", "*.txt *.csv"),
+                ("Text files", "*.txt"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*"),
+            ),
         )
         if not coordinates_path:
             return None
